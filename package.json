@@ -1,0 +1,27 @@
+{
+  "name": "timescale-swaps",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "description": "Synthetic write and query load generators for TimescaleDB, benchmarking pg vs postgres.js throughput.",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "swaps": "tsx src/main.ts swaps",
+    "swaps:pg": "tsx src/main.ts swaps --driver pg",
+    "swaps:postgres": "tsx src/main.ts swaps --driver postgres",
+    "query": "tsx src/main.ts query",
+    "query:pg": "tsx src/main.ts query --driver pg",
+    "query:postgres": "tsx src/main.ts query --driver postgres"
+  },
+  "dependencies": {
+    "mongodb": "^7.6.0",
+    "pg": "^8.13.1",
+    "postgres": "^3.4.5"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.5",
+    "@types/pg": "^8.11.10",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3"
+  }
+}

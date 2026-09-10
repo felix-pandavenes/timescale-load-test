@@ -1,0 +1,66 @@
+[
+  {
+    "name": "Get events",
+    "sql": "SELECT * FROM events WHERE chain = $1 AND pair = $2 ORDER BY timestamp DESC LIMIT $3;",
+    "params": [
+      "$chain",
+      "$pair",
+      100
+    ]
+  },
+  {
+    "name": "Get wallets",
+    "sql": "SELECT * FROM events WHERE chain = $1 AND pair = $2 AND maker = ANY($3::text[]) ORDER BY timestamp DESC LIMIT $4;",
+    "params": [
+      "$chain",
+      "$pair",
+      ["aaaaa"],
+      100
+    ]
+  },
+  {
+    "name": "Count swaps",
+    "sql": "SELECT * FROM events WHERE chain = $1 AND pair = $2 AND maker = ANY($3::text[]) ORDER BY timestamp DESC LIMIT $4;",
+    "params": [
+      "$chain",
+      "$pair",
+      ["aaaaa"],
+      100
+    ]
+  },
+  {
+    "name": "Flight candle",
+    "sql": "SELECT time_bucket('1 hour', bucket) AS rb, first(open_usd, bucket) AS open_usd, max(high_usd) AS high_usd, min(low_usd) AS low_usd, last(close_usd, bucket) AS close_usd, sum(volume_usd) AS volume_usd FROM candles_1m WHERE chain = $1 AND pair = $2 AND bucket >= time_bucket('1 hour', now()) GROUP BY rb;",
+    "params": [
+      "$chain",
+      "$pair"
+    ]
+  },
+  {
+    "name": "Last candles 1m",
+    "sql": "SELECT time_bucket('1 minute', bucket) AS rb, first(open_usd, bucket) AS open_usd, max(high_usd) AS high_usd, min(low_usd) AS low_usd, last(close_usd, bucket) AS close_usd, sum(volume_usd) AS volume_usd FROM candles_1m_unified WHERE chain = $1 AND pair = $2 GROUP BY rb ORDER BY rb DESC LIMIT $3;",
+    "params": [
+      "$chain",
+      "$pair",
+      100
+    ]
+  },
+  {
+    "name": "Last candles 1h",
+    "sql": "SELECT time_bucket('1 hour', bucket) AS rb, first(open_usd, bucket) AS open_usd, max(high_usd) AS high_usd, min(low_usd) AS low_usd, last(close_usd, bucket) AS close_usd, sum(volume_usd) AS volume_usd FROM candles_1m_unified WHERE chain = $1 AND pair = $2 GROUP BY rb ORDER BY rb DESC LIMIT $3;",
+    "params": [
+      "$chain",
+      "$pair",
+      100
+    ]
+  },
+  {
+    "name": "Last candles 1d",
+    "sql": "SELECT time_bucket('1 day', bucket) AS rb, first(open_usd, bucket) AS open_usd, max(high_usd) AS high_usd, min(low_usd) AS low_usd, last(close_usd, bucket) AS close_usd, sum(volume_usd) AS volume_usd FROM candles_1m_unified WHERE chain = $1 AND pair = $2 GROUP BY rb ORDER BY rb DESC LIMIT $3;",
+    "params": [
+      "$chain",
+      "$pair",
+      100
+    ]
+  }
+]

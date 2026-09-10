@@ -1,0 +1,8 @@
+{
+  "num_clients": 10,
+  "duration_sec": 300,
+  "queries_per_second": 100,
+  "rate_multiplier": 10,
+  "timescale_url": "postgres://swaps:swaps@localhost:5432/swaps",
+  "driver": "pg",
+}

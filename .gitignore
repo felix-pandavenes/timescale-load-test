@@ -1,0 +1,8 @@
+.DS_Store
+ts-test
+.vscode
+bin
+coverage.html
+coverage.out
+node_modules
+dist

@@ -16,9 +16,9 @@ export function needsChainPair(params: readonly unknown[]): boolean {
  * swaps generator was never run against this database) — callers already
  * catch and record query errors, so this surfaces as a normal error rather
  * than a crash. */
-export function resolveParams(params: readonly unknown[], pool: readonly ChainPair[]): unknown[] {
+export function resolveParams(params: readonly unknown[], pool: readonly ChainPair[]): { chain: string, params: unknown[] } {
   if (!needsChainPair(params)) {
-    return params as unknown[];
+    return { chain: 'shared', params: params as unknown[] };
   }
   if (pool.length === 0) {
     throw new Error(
@@ -26,9 +26,12 @@ export function resolveParams(params: readonly unknown[], pool: readonly ChainPa
     );
   }
   const picked = pool[Math.floor(Math.random() * pool.length)];
-  return params.map((p) => {
-    if (p === CHAIN_PLACEHOLDER) return picked.chain;
-    if (p === PAIR_PLACEHOLDER) return picked.pair;
-    return p;
-  });
+  return {
+    chain: picked.chain,
+    params: params.map((p) => {
+      if (p === CHAIN_PLACEHOLDER) return picked.chain;
+      if (p === PAIR_PLACEHOLDER) return picked.pair;
+      return p;
+    }),
+  };
 }

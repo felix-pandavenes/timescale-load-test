@@ -33,7 +33,7 @@ export async function runQueryLoad(cfg: QueryConfig, queries: QueryDef[]): Promi
   const eventLoopUtilization = createEventLoopUtilization();
   eventLoopUtilization.start();
 
-  const store = createStore(cfg.driver, cfg.timescaleUrl, cfg.numClients);
+  const store = createStore(cfg.driver, cfg.timescaleUrl, cfg.numClients, false);
   await store.connect();
   store.setQueries(queries);
 
@@ -117,8 +117,8 @@ async function runClient(
     const q = queries[Math.floor(Math.random() * queries.length)];
     const startNs = process.hrtime.bigint();
     try {
-      const params = resolveParams(q.params ?? [], chainPairs);
-      const rowCount = await store.query(q.name, params);
+      const { chain, params } = resolveParams(q.params ?? [], chainPairs);
+      const rowCount = await store.query(chain, q.name, params);
       const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
       stats.record(q.name, elapsedMs);
       rowStats.record(q.name, rowCount);

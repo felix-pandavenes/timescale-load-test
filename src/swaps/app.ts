@@ -10,7 +10,7 @@ import type { SwapEvent } from "../domain.js";
 
 const EXECUTION_TTL_MS = 12 * 60 * 60 * 1000;
 
-const CHAIN_COLUMNS = ["Chain", "Pairs", "Generated", "Errors", "Inserted", "Avg(ms)", "Min(ms)", "Max(ms)"];
+const CHAIN_COLUMNS = ["Chain", "Pairs", "Generated", "Inserted", "Errors", "Avg(ms)", "Min(ms)", "Max(ms)"];
 const CHAIN_COL_WIDTH = 10;
 
 function fmtMs(ms: number): string {
@@ -37,7 +37,7 @@ export async function runSwaps(cfg: SwapsConfig): Promise<void> {
   console.log();
   console.log(
     `SWAP GENERATOR: execution=${executionId} | chains=${cfg.chains.length} | pairs=${totalPairs} | ` +
-      `driver=${cfg.driver} | rate_multiplier=${cfg.rateMultiplier}x | ` +
+      `driver=${cfg.driver} | rate_multiplier=${cfg.rateMultiplier}x | insert_in_batches=${cfg.insertInBatches} | ` +
       `started=${new Date(startTime).toISOString()}`,
   );
   console.log(cfg.durationSec > 0 ? `  duration=${cfg.durationSec}s` : "  duration=until interrupted (Ctrl+C)");
@@ -132,7 +132,7 @@ export async function runSwaps(cfg: SwapsConfig): Promise<void> {
 async function initStore(executionId: string, cfg: SwapsConfig): Promise<Store> {
   const pairs = allChainPairs(cfg);
   const expiresAt = new Date(Date.now() + EXECUTION_TTL_MS);
-  const store = createStore(cfg.driver, cfg.timescaleUrl, cfg.chains.length);
+  const store = createStore(cfg.driver, cfg.timescaleUrl, cfg.chains.length, cfg.insertInBatches);
   await store.init(pairs, executionId, expiresAt);
 
   console.log(`Published ${pairs.length} (chain,pair) combinations to store (execution ${executionId})`);
@@ -158,8 +158,12 @@ async function insertSwap(
     const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
     stats.inserted++;
     writeStats.record(chainId, elapsedMs);
-  } catch {
+  } catch(error) {
+    console.log(`Error: ${(error as Error).stack}`);
     stats.errors++;
+    if (stats.errors > 10) {
+      process.exit(1);
+    }
   }
 }
 
@@ -176,8 +180,8 @@ function formatChainRow(name: string, pairs: number, s: ChainStats, w: LiveStats
     name.padStart(nameWidth),
     pad(String(pairs)),
     pad(String(s.generated)),
-    pad(String(s.errors)),
     pad(String(s.inserted)),
+    pad(String(s.errors)),
     pad(fmtMs(w.avg)),
     pad(fmtMs(w.min)),
     pad(fmtMs(w.max)),

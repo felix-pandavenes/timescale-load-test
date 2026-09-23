@@ -28,6 +28,7 @@ export interface SwapsConfig {
   durationSec: number; // 0 = run until interrupted (Ctrl+C)
   timescaleUrl: string;
   rateMultiplier: number; // scales every chain's swaps_per_second; 1 = no change, 1.3 = 130%, 0.7 = 70%
+  insertInBatches: boolean;
   driver: Driver;
   chains: ChainConfig[];
 }
@@ -42,6 +43,7 @@ interface RawSwapsConfig {
   duration_sec?: number;
   timescale_url?: string;
   rate_multiplier?: number;
+  insert_in_batches?: boolean;
   driver?: string;
   chains?: RawChainConfig[];
 }
@@ -54,6 +56,7 @@ function applyDefaults(raw: RawSwapsConfig): SwapsConfig {
     durationSec: raw.duration_sec ?? 0,
     timescaleUrl: raw.timescale_url || process.env.TIMESCALE_URL || DEFAULT_TIMESCALE_URL,
     rateMultiplier,
+    insertInBatches: raw.insert_in_batches ?? false,
     driver: raw.driver && isDriver(raw.driver) ? raw.driver : "pg",
     chains: (raw.chains ?? []).map((c) => ({
       id: c.id ?? "",

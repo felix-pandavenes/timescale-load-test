@@ -1,0 +1,412 @@
+import { MongoClient, Collection } from "mongodb";
+import type { Store } from "./index.js";
+import type { ChainPair, ChainPairRecord, QueryDef, SwapEvent } from "../domain.js";
+
+const EVENTS_PAIR_COLLECTION = "events_pair_buckets";
+
+interface EventBucketId {
+  exchange: string;
+  pair: string;
+  token: string;
+  tokenRef: string;
+}
+
+/** A bucket document: up to 100 swaps for one pair, grouped together so a
+ * high-frequency pair doesn't get one document per swap. */
+interface EventBucket {
+  id: EventBucketId;
+  tag?: string;
+  count: number;
+  firstTime: Date;
+  firstBlock: number;
+  lastTime: Date;
+  lastBlock: number;
+  content: { event: SwapEvent }[];
+}
+
+/** MongoDB-backed Store. Doesn't extend PostgresStore: Mongo isn't
+ * Postgres-flavored, so there's no bind-param chunking or SQL text to share
+ * with it — this is a direct `Store` implementation, same as the Postgres
+ * ones are from the caller's point of view. Swap insertion is implemented
+ * (bucketed into per-pair documents, capped at 100 events per bucket);
+ * `init`/`query`/`fetchCurrentChainPairs` (chain/pair + execution tracking)
+ * are not implemented yet — every method throws until filled in, rather
+ * than silently no-op'ing, so an accidental `--driver mongodb` run fails
+ * loudly instead of pretending to work. */
+export class MongoStore implements Store {
+  private readonly client: MongoClient;
+  private readonly eventsPairCollection: Collection<EventBucket>;
+  private queriesByName = new Map<string, QueryDef>();
+
+  constructor(connectionString: string, maxPoolSize: number) {
+    this.client = new MongoClient(connectionString, { maxPoolSize });
+    this.eventsPairCollection = this.client.db().collection<EventBucket>(EVENTS_PAIR_COLLECTION);
+  }
+
+  async connect(): Promise<void> {
+    await this.client.connect();
+  }
+
+  async init(pairs: ChainPair[], executionId: string, expiresAt: Date): Promise<void> {
+    await this.connect();
+    throw new Error("MongoStore.init: not implemented yet");
+  }
+
+  async insertSwap(swap: SwapEvent): Promise<void> {
+    await Promise.all([
+      this.saveEvent(swap),
+      this.saveCandle(swap),
+      this.updateLiquidityPool(swap),
+      this.updateWallets(swap),
+    ]);
+  }
+
+  setQueries(queries: QueryDef[]): void {
+    this.queriesByName = new Map(queries.map((q) => [q.name, q]));
+  }
+
+  async query(name: string, params: readonly unknown[]): Promise<number> {
+    throw new Error("MongoStore.query: not implemented yet");
+  }
+
+  async fetchCurrentChainPairs(): Promise<ChainPairRecord[]> {
+    throw new Error("MongoStore.fetchCurrentChainPairs: not implemented yet");
+  }
+
+  async close(executionId?: string): Promise<void> {
+    await this.client.close();
+  }
+
+  private async saveEvent(event: SwapEvent): Promise<void> {
+    try {
+      const bucketId = {
+        exchange: "echaange-1",
+        pair: event.pair,
+        token: `${event.pair}-token`,
+        tokenRef: `${event.pair}-tokenRef`,
+      };
+
+      const eventDate = new Date(event.timestamp * 1000);
+      const filter = {
+        $and: [
+          { id: bucketId },
+          { tag: { $exists: false } },
+          {
+            $or: [{ count: { $lt: 100 } }, { lastTime: eventDate }],
+          },
+        ],
+      };
+
+      const update = {
+        $push: {
+          content: { event },
+        },
+        $inc: { count: 1 },
+        $set: { lastTime: eventDate, lastBlock: event.blockNumber },
+        $setOnInsert: { id: bucketId, firstTime: eventDate, firstBlock: event.blockNumber },
+      };
+
+      const options = { upsert: true };
+
+      await this.eventsPairCollection.updateOne(filter, update, options);
+    } catch (err) {
+      const error = err as Error;
+      console.log(`MongoStore.insertRow(${event.pair}) ERROR writing swap ${JSON.stringify(event)}: ${error.message}`);
+    }
+  }
+
+  private async saveCandle(event: SwapEvent): Promise<void> {
+    let lastEvent: SwapEvent;
+    let currentCandle: Candle; // Work in progress candle
+
+    _currentBucket; // MongoDB ID of the current bucket
+
+    static _candlesCollection; // MongoDB Collection for candles(same for all pairs)
+
+    /**
+     * Creates an instance of PairCandlesStoreMongo.
+     * @param {*} pair Pair information
+     * @memberof PairCandlesStoreMongo
+     */
+    constructor(pair) {
+        super({ objectMode: true, highWaterMark: 64 });
+        this._pair = pair;
+    }
+
+    /**
+     * Static method to set the MongoDB collection object
+     * @static
+     * @param {*} collection Collection to be set
+     * @memberof PairCandlesStoreMongo
+     */
+    static initializeCollectionForAllPairs(collection) {
+        PairCandlesStoreMongo._candlesCollection = collection;
+    }
+
+    /**
+     *
+     * Init to be called before any operation. Blockchain name is retrieved from environment.
+     * Connects to MongoDB, gets last candle written to database for this blockchain and pair,
+     * and its bucket MongoDB ID (_id).
+     * If no candle is found in database, creates an initial placeholder with timestamp zero.
+     * WARNING: we assume 1 minute candles for now.
+     * @memberof PairCandlesStoreMongo
+     */
+    async init() {
+        const bucket = await PairCandlesStoreMongo._getLatestCandleAndBucketFromMongo(this._pair);
+
+        this._currentCandle = bucket?.candle;
+
+        if (this._currentCandle == null) {
+            logger.debug(`PairCandlesStoreMongo(${this._pair.address}) Initialized, no previous candles found`);
+            this._currentCandle = new Candle(blockchain.id, this._pair, 0);
+        } else {
+            logger.debug(`PairCandlesStoreMongo(${this._pair.address}) Initialized, continues from candle ${JSON.stringify(this._currentCandle)}`);
+            Object.setPrototypeOf(this._currentCandle, Candle.prototype);
+            this._currentCandle.isNewCandle = false;
+            this._currentCandle.lengthInMinutes = 1;
+            this._currentBucket = bucket?._id;
+        }
+    }
+
+    /**
+     * Coordinates updates to candle values based on trades.
+     * Validations:
+     * - If the trade is already processed, drop it (checked by blockNumber and logIndex, then by timestamp)
+     * - If the trade falls in a candle interval after the current one, create a new current candle
+     * @param {*} trade Trade object
+     * @return {*} Candle object to store or empty object if it should not be stored.
+     * @memberof PairCandlesStoreMongo
+     */
+    _processTrade(trade) {
+        if (this._currentCandle.hasSeenTradeEventOlderThan(this._lastEvent.blockNumber, this._lastEvent.logIndex)) {
+            // Uncomment for debugging
+            // logger.warn(`PairCandlesStoreMongo(${this._pair.address}) WARNING Candle not generated, older than current. Maybe force running from a previous block... ${JSON.stringify(trade)}`);
+            return {};
+        }
+
+        const tradeTimestamp = trade.timestamp * 1000;
+        if (this._currentCandle.isAfterTheCandleIntervalOf(tradeTimestamp)) {
+            logger.warn(`PairCandlesStoreMongo(${this._pair.address}) WARNING Candle not generated, this should not happen... ${JSON.stringify(trade)}`);
+            return {};
+        }
+
+        if (this._currentCandle.isBeforeTheCandleIntervalOf(tradeTimestamp)) {
+            this._currentCandle = new Candle(blockchain.id, this._pair, tradeTimestamp);
+            // Uncomment for debugging
+            // logger.debug(`PairCandlesStoreMongo(${this._pair.address}) New candle interval reached, ${JSON.stringify(this._currentCandle.ts)}`);
+        }
+
+        const price = trade.pool?.price || trade.price;
+        const priceETH = trade.pool?.priceETH || trade.priceETH;
+
+        const candleChanges = [];
+        candleChanges.push({ currency: 'usd', price: +price, amount: trade.amountUSD, type: trade.type });
+        candleChanges.push({ currency: 'eth', price: +priceETH, amount: trade.amountETH, type: trade.type });
+
+        this._currentCandle.updateCandleValuesWith(candleChanges, this._lastEvent.blockNumber, this._lastEvent.logIndex, this._lastEvent.timestamp);
+
+        return this._currentCandle;
+    }
+
+    /**
+     * Writable stream _write implementation. Processes groups of block events.
+     *
+     * Validations:
+     * - Drop events that are not trades (swaps)
+     * - Drop events without timestamp (not belonging to a specific candle)
+     * - Drop trades without price, price 0 or scamwick flag.
+     * @param {*} blockEvents Group of events (potential trades/swaps)
+     * @param {*} encoding Not used. Conform to stream interface.
+     * @param {*} callback Stream interface method to continue processing.
+     * @memberof PairCandlesStoreMongo
+     */
+    _write(blockEvents, encoding, callback) {
+        const that = this;
+        (async () => {
+            let candle;
+            const previousCandle = that._currentCandle;
+
+            for (const event of blockEvents) {
+                that._lastEvent = event;
+
+                // Only accept swaps
+                if (event.type !== 'buy' && event.type !== 'sell') {
+                    // eslint-disable-next-line no-continue
+                    continue;
+                }
+
+                // Do not process if missing timestamp
+                if (!event.timestamp) {
+                    logger.warn(`PairCandlesStoreMongo(${that._pair.address}) WARNING Candle not generated, missing swap timestamp ${JSON.stringify(event)}`);
+                    // eslint-disable-next-line no-continue
+                    continue;
+                }
+
+                // Do not include in candles swaps with price 0$
+                if (!event.price || (!event.pool?.price && event?.others?.scamwick)) {
+                    // logger.warn(`PairCandlesStoreMongo(${that._pair.address}) WARNING Candle not generated, missing price or scamwik marked ${JSON.stringify(event)}`);
+                    // eslint-disable-next-line no-continue
+                    continue;
+                }
+
+                candle = that._processTrade(event);
+            }
+
+            if (candle && candle.ts) {
+                await that._storeCandle(candle, previousCandle, that._lastEvent.blockNumber);
+            }
+        })()
+            .then(() => {
+                callback();
+            })
+            .catch(err => {
+                logger.error(`PairCandlesStoreMongo(${this._pair.address}) ERROR processing on write stream ${JSON.stringify(err)}`);
+                callback(); // TODO decide if err should be returned to parent
+            });
+    }
+
+    /**
+     * Find latest candle and bucket in MongoDB for a blockchain and pair
+     * @param {*} pair Pair object
+     * @return {*} Bucket object with id and candle object if found. Null if not.
+     * @memberof PairCandlesStoreMongo
+     */
+    static async _getLatestCandleAndBucketFromMongo(pair) {
+        let bucket;
+        try {
+            const query = { 'id.pair': pair._address };
+            const options = {
+                sort: { firstTime: -1 },
+                projection: { candle: { $last: '$content' } },
+            };
+
+            bucket = await PairCandlesStoreMongo._candlesCollection.findOne(query, options);
+        } catch (error) {
+            logger.error(`PairCandlesStoreMongo(${pair.address}) ERROR reading CANDLE ${JSON.stringify(error)}`);
+        }
+        return bucket;
+    }
+
+    /**
+     * Store candles in MongoDB.
+     * Note:
+     * - The isNewCandle and lengthInMinutes properties are removed, no need to store them.
+     * - The storage method is updateOne, in two variants:
+     *      - Update with upsert for candle insertions, because of potential bucket creation.
+     *      - Update using bucket MongoDB ID for candle updates.
+     * - There are two different bucket ids:
+     *      - A descriptive one (pair, exchange, etc.), matches the "id" field.
+     *      - An exact one (MongoDB ID), matches the "_id" field.
+     *
+     * @param {*} candle Candle object. ts is start Timestamp of candle interval
+     * @param {*} candle Previous candle object. To decide if an insert or an update is needed.
+     * @param {*} blockNumber Block Number. For updating bucket metadata.
+     * @return {*} N/A
+     * @memberof PairCandlesStoreMongo
+     */
+    async _storeCandle(candle, previousCandle, blockNumber) {
+        if (!candle || !candle.usd) return;
+
+        const tokenInfo = {
+            token: this._pair.token.id,
+            tokenRef: this._pair.tokenRef.id,
+        };
+
+        const bucketId = {
+            exchange: this._pair.exchange, pair: this._pair.address, token: tokenInfo.token, tokenRef: tokenInfo.tokenRef,
+        };
+
+        delete candle.isNewCandle;
+        delete candle.lengthInMinutes;
+
+        const THRESHOLD = 10 * 100; // x10 % diff
+
+        /**
+         * "Normalize" candles if a huge wick is detected to the upside
+         * Downside wicks replacement is not implemented due to legit rugpulls trigerring the rule
+         * THRESHOLD is expressed in the times by 100% change
+         */
+        const bodyHigh = Math.max(candle.usd.open, candle.usd.close);
+        const upDiff = bodyHigh > 0 ? ((candle.usd.high - bodyHigh) / bodyHigh) * 100 : 0;
+
+        if (upDiff > THRESHOLD) {
+            const previous = candle.usd.high;
+            // IMPORTANT: Commented right now, just printing cases to confirm no legit wicks are affected
+            candle.usd.high = bodyHigh;
+            candle.eth.high = Math.max(candle.eth.open, candle.eth.close);
+            logger.info(`PairCandlesStoreMongo._storeCandle(${this._pair._address}) WARN: ${upDiff.toFixed(0)}% upside wick (${candle.ts} | blocks: ${candle.firstBlock} - ${candle.lastBlock}). Wick replaced from: ${previous}$ into ${bodyHigh}$`);
+        }
+
+        try {
+            if (candle.ts !== previousCandle.ts) {
+                const insertResult = await PairCandlesStoreMongo._insertCandleInBucket(bucketId, candle, blockNumber);
+
+                if (insertResult.upsertedCount > 0) { // When a new bucket is created, update our state.
+                    this._currentBucket = insertResult.upsertedId;
+                }
+            } else {
+                await PairCandlesStoreMongo._updateCandleInBucket(this._currentBucket, candle, blockNumber);
+            }
+            return;
+        } catch (error) {
+            logger.error(`PairCandlesStoreMongo(${this._pair.address}) ERROR writing CANDLE ${JSON.stringify(candle)} ${JSON.stringify(error)}`);
+        }
+    }
+
+    /**
+     * Insert a new candle in a bucket. Hardcoded 720 1 minute candles.
+     *
+     * @static
+     * @param {*} bucketId Bucket identification (descriptor, "id" field)
+     * @param {*} candle Candle to store
+     * @param {*} blockNumber Block number of the last event that updated the candle.
+     * @return {*} Descriptor of result
+     * @memberof PairCandlesStoreMongo
+     */
+    static async _insertCandleInBucket(bucketId, candle, blockNumber) {
+        const query = { id: bucketId, count: { $lt: 720 }, tag: { $exists: false } };
+        const update = {
+            $push: { content: candle },
+            $inc: { count: 1 },
+            $set: { lastTime: candle.ts, lastBlock: blockNumber },
+            $setOnInsert: { id: bucketId, firstTime: candle.ts, firstBlock: blockNumber },
+        };
+        const options = { upsert: true };
+
+        const result = await PairCandlesStoreMongo._candlesCollection.updateOne(query, update, options);
+
+        return result;
+    }
+
+    /**
+     * Updates a candle in a bucket.
+     *
+     * @static
+     * @param {*} bucketId Bucket identification (MongoDB ID, "_id" field)
+     * @param {*} candle Candle to update
+     * @param {*} blockNumber Block number of the last event that updated the candle.
+     * @memberof PairCandlesStoreMongo
+     */
+    static async _updateCandleInBucket(bucketId, candle, blockNumber) {
+
+        const query = { _id: bucketId };
+        const update = {
+            $set: { 'content.$[candleId]': candle, lastTime: candle.ts, lastBlock: blockNumber },
+        };
+        const options = { arrayFilters: [{ 'candleId.ts': { $eq: candle.ts } }] };
+
+        await PairCandlesStoreMongo._candlesCollection.updateOne(query, update, options);
+    }
+}
+
+  }
+
+  private async updateLiquidityPool(event: SwapEvent): Promise<void> {
+
+  }
+
+  private async updateWallets(event: SwapEvent): Promise<void> {
+
+  }
+}

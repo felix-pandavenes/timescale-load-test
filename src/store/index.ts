@@ -1,5 +1,5 @@
 import { PgStore , PostgresJsStore } from "./postgres.js";
-import { MongoStore } from "./mongodb.js";
+//import { MongoStore } from "./mongodb.tsbak";
 import type { ChainPair, ChainPairRecord, QueryDef, SwapEvent } from "../domain.js";
 
 
@@ -19,20 +19,22 @@ export interface Store {
    * SQL/whatever the underlying storage technology needs — callers only
    * ever refer to queries by name, never by raw query text. */
   setQueries(queries: QueryDef[]): void;
-  query(name: string, params: readonly unknown[]): Promise<number>;
+  query(chain: string, name: string, params: readonly unknown[]): Promise<number>;
   fetchCurrentChainPairs(): Promise<ChainPairRecord[]>;
   close(executionId?: string): Promise<void>;
 }
 
 /** poolSize should match the number of concurrent producers/clients so none
  * of them ever queues for a connection. */
-export function createStore(driver: Driver, connectionString: string, poolSize: number): Store {
+export function createStore(driver: Driver, connectionString: string, poolSize: number, insertInBatches: boolean): Store {
   switch (driver) {
     case "pg":
-      return new PgStore(connectionString, poolSize);
+      return new PgStore(connectionString, poolSize, insertInBatches);
     case "postgres":
-      return new PostgresJsStore(connectionString, poolSize);
-    case "mongodb":
-      return new MongoStore(connectionString, poolSize);
+      return new PostgresJsStore(connectionString, poolSize, insertInBatches);
+    //case "mongodb":
+      //return new MongoStore(connectionString, poolSize);
+    default:
+      throw Error(`Invalid driver ${driver}`)
   }
 }

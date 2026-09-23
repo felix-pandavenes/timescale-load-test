@@ -5,6 +5,8 @@ services:
     image: timescale/timescaledb:latest-pg16
     ports:
       - "5432:5432"
+    cpus: "1.0"
+    mem_limit: 1g
     environment:
       POSTGRES_USER: swaps
       POSTGRES_PASSWORD: swaps

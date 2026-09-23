@@ -83,14 +83,24 @@ export async function runSwaps(cfg: SwapsConfig): Promise<void> {
     const stats = live.perChain.get(chain.id)!;
     const states = Array.from({ length: chain.numPairs }, () => new PairState());
     let nextPair = 0;
-    const intervalMs = 1000 / chain.swapsPerSecond;
+    const swapsPerMs = chain.swapsPerSecond / 1000;
+    const intervalMs = Math.max(1, Math.round(1000 / chain.swapsPerSecond));
+    let carry = 0;
+    let lastTick = Date.now();
     const timer = setInterval(() => {
       if (generatorsStopped) return;
-      const i = nextPair;
-      nextPair = (nextPair + 1) % chain.numPairs;
-      const swap: SwapEvent = { ...states[i].next(), chain: chain.id, pair: pairId(chain.id, i) };
-      const p = insertSwap(store, chain.id, swap, stats, writeStats).finally(() => inFlight.delete(p));
-      inFlight.add(p);
+      const now = Date.now();
+      carry += (now - lastTick) * swapsPerMs;
+      lastTick = now;
+      const due = Math.floor(carry);
+      carry -= due;
+      for (let n = 0; n < due; n++) {
+        const i = nextPair;
+        nextPair = (nextPair + 1) % chain.numPairs;
+        const swap: SwapEvent = { ...states[i].next(), chain: chain.id, pair: pairId(chain.id, i) };
+        const p = insertSwap(store, chain.id, swap, stats, writeStats).finally(() => inFlight.delete(p));
+        inFlight.add(p);
+      }
     }, intervalMs);
     generatorTimers.push(timer);
   }

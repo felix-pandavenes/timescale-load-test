@@ -119,6 +119,10 @@ export function pairCount(cfg: SwapsConfig): number {
   return cfg.chains.reduce((n, chain) => n + chain.numPairs, 0);
 }
 
+export function throughput(cfg: SwapsConfig): number {
+  return cfg.chains.reduce((n, chain) => n + chain.swapsPerSecond, 0);
+}
+
 /** The deterministic pair ID for the i-th pair of a chain: a SHA-256 hash of
  * `${chain}-${index}`, encoded in a 64-character alphabet (base64url)
  * rather than hex, to keep it compact. Deterministic on purpose — the same

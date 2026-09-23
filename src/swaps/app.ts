@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { SwapsConfig } from "./config.js";
-import { allChainPairs, pairCount, pairId } from "./config.js";
+import { allChainPairs, pairCount, pairId, throughput } from "./config.js";
 import { PairState } from "./generator.js";
 import { LiveProgress, repeatChar } from "../liveProgress.js";
 import { createStore, type Store } from "../store/index.js";
@@ -10,7 +10,7 @@ import type { SwapEvent } from "../domain.js";
 
 const EXECUTION_TTL_MS = 12 * 60 * 60 * 1000;
 
-const CHAIN_COLUMNS = ["Chain", "Pairs", "Generated", "Inserted", "Errors", "Avg(ms)", "Min(ms)", "Max(ms)"];
+const CHAIN_COLUMNS = ["Chain", "Pairs", "Inserted", "Errors", "Avg(ms)", "Min(ms)", "Max(ms)"];
 const CHAIN_COL_WIDTH = 10;
 
 function fmtMs(ms: number): string {
@@ -18,7 +18,6 @@ function fmtMs(ms: number): string {
 }
 
 interface ChainStats {
-  generated: number;
   inserted: number;
   errors: number;
 }
@@ -32,20 +31,20 @@ interface LiveSwapStats {
 export async function runSwaps(cfg: SwapsConfig): Promise<void> {
   const startTime = Date.now();
   const totalPairs = pairCount(cfg);
+  const totalThroughput = throughput(cfg);
   const executionId = randomUUID();
 
   console.log();
   console.log(
-    `SWAP GENERATOR: execution=${executionId} | chains=${cfg.chains.length} | pairs=${totalPairs} | ` +
+    `SWAP GENERATOR: execution=${executionId} | chains=${cfg.chains.length} | pairs=${totalPairs} | throughput=${totalThroughput} s/s | ` +
       `driver=${cfg.driver} | rate_multiplier=${cfg.rateMultiplier}x | insert_in_batches=${cfg.insertInBatches} | ` +
-      `started=${new Date(startTime).toISOString()}`,
+      `started=${new Date(startTime).toISOString()} ` + (cfg.durationSec > 0 ? `  duration=${cfg.durationSec}s` : "  duration=until interrupted (Ctrl+C)"),
   );
-  console.log(cfg.durationSec > 0 ? `  duration=${cfg.durationSec}s` : "  duration=until interrupted (Ctrl+C)");
   console.log();
 
   const chainIds = cfg.chains.map((c) => c.id);
   const live: LiveSwapStats = {
-    perChain: new Map(chainIds.map((id) => [id, { generated: 0, inserted: 0, errors: 0 }])),
+    perChain: new Map(chainIds.map((id) => [id, { inserted: 0, errors: 0 }])),
     status: "Running",
     dots: 0,
   };
@@ -90,7 +89,6 @@ export async function runSwaps(cfg: SwapsConfig): Promise<void> {
       const i = nextPair;
       nextPair = (nextPair + 1) % chain.numPairs;
       const swap: SwapEvent = { ...states[i].next(), chain: chain.id, pair: pairId(chain.id, i) };
-      stats.generated++;
       const p = insertSwap(store, chain.id, swap, stats, writeStats).finally(() => inFlight.delete(p));
       inFlight.add(p);
     }, intervalMs);
@@ -123,10 +121,16 @@ export async function runSwaps(cfg: SwapsConfig): Promise<void> {
   const elapsedSec = Math.round((Date.now() - startTime) / 1000);
   const totalInserted = [...live.perChain.values()].reduce((n, s) => n + s.inserted, 0);
   const totalErrors = [...live.perChain.values()].reduce((n, s) => n + s.errors, 0);
-  console.log(`Done. Inserted ${totalInserted} swaps in ${elapsedSec}s.`);
-  if (totalErrors > 0) {
-    console.log(`Dropped ${totalErrors} swaps (failed to insert).`);
-  }
+  console.log(
+    `Done: execution=${executionId} | chains=${cfg.chains.length} | pairs=${totalPairs} | insert_in_batches=${cfg.insertInBatches} | ` +
+      `driver=${cfg.driver} | rate_multiplier=${cfg.rateMultiplier}x | `
+  );
+  console.log(
+    `Summary: inserted=${totalInserted} | errors=${totalErrors} | throughput=${totalThroughput} s/s | ` +
+      `started=${new Date(startTime).toISOString()} | ended=${new Date().toISOString()} | duration: ${elapsedSec}s`,
+  );
+
+  console.log();
 }
 
 async function initStore(executionId: string, cfg: SwapsConfig): Promise<Store> {
@@ -172,14 +176,13 @@ function formatChainHeader(nameWidth: number): string {
   return [first.padStart(nameWidth), ...rest.map((h) => h.padStart(CHAIN_COL_WIDTH))].join(" ");
 }
 
-/** One row combining generated/error/inserted counts and write-latency (ms)
+/** One row combining inserted/errors counts and write-latency (ms)
  * stats for a single chain (or "TOTAL"). */
 function formatChainRow(name: string, pairs: number, s: ChainStats, w: LiveStats, nameWidth: number): string {
   const pad = (v: string) => v.padStart(CHAIN_COL_WIDTH);
   return [
     name.padStart(nameWidth),
     pad(String(pairs)),
-    pad(String(s.generated)),
     pad(String(s.inserted)),
     pad(String(s.errors)),
     pad(fmtMs(w.avg)),
@@ -211,9 +214,8 @@ function renderSwapProgress(
   });
   lines += lp.liveLine("%s", repeatChar("-", chainTableWidth));
 
-  const totalStats: ChainStats = { generated: 0, inserted: 0, errors: 0 };
+  const totalStats: ChainStats = { inserted: 0, errors: 0 };
   for (const s of live.perChain.values()) {
-    totalStats.generated += s.generated;
     totalStats.inserted += s.inserted;
     totalStats.errors += s.errors;
   }

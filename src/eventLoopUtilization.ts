@@ -4,8 +4,9 @@ export interface EventLoopUtilizationSnapshot {
   activeMs: number;
   idleMs: number;
   utilizationPct: number;
-  maxUtilizationPct: number;
   avgUtilizationPct: number;
+  minUtilizationPct: number;
+  maxUtilizationPct: number;
 }
 
 /** Tracks Node's event-loop utilization — what share of the time since
@@ -24,7 +25,7 @@ export interface EventLoopUtilization {
   snapshot(): EventLoopUtilizationSnapshot;
 }
 
-const EMPTY_SNAPSHOT: EventLoopUtilizationSnapshot = { utilizationPct: 0, activeMs: 0, idleMs: 0, maxUtilizationPct: 0, avgUtilizationPct: 0 };
+const EMPTY_SNAPSHOT: EventLoopUtilizationSnapshot = { utilizationPct: 0, activeMs: 0, idleMs: 0, avgUtilizationPct: 0, minUtilizationPct: 0 , maxUtilizationPct: 0 };
 
 export function createEventLoopUtilization(): EventLoopUtilization {
   let baseline: NodeEventLoopUtilization | null = null;

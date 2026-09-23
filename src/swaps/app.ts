@@ -221,10 +221,11 @@ function renderSwapProgress(
   lines += lp.liveLine("");
 
   lines += lp.liveLine(
-    "Event loop utilization: %s%; Max: %s%, Avg: %s%",
+    "Event loop utilization: %s%; Avg: %s%, Min: %s%, Max: %s%",
     eventLoopUtilization.utilizationPct.toFixed(1),
-    eventLoopUtilization.maxUtilizationPct.toFixed(1),
-    eventLoopUtilization.avgUtilizationPct.toFixed(1));
+    eventLoopUtilization.avgUtilizationPct.toFixed(1),
+    eventLoopUtilization.minUtilizationPct.toFixed(1),
+    eventLoopUtilization.maxUtilizationPct.toFixed(1));
   lines += lp.liveLine("Status: %s %s", live.status, repeatChar(".", live.dots));
   live.dots = live.dots + 1 > 3 ? 0 : live.dots + 1;
   return lines;

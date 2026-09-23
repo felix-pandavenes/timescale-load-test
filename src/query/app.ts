@@ -156,10 +156,11 @@ function renderQueryProgress(
   lines += lp.liveLine("");
 
   lines += lp.liveLine(
-    "Event loop utilization: %s%; Max: %s%, Avg: %s%",
+    "Event loop utilization: %s%; Avg: %s%, Min: %s%, Max: %s%",
     eventLoopUtilization.utilizationPct.toFixed(1),
-    eventLoopUtilization.maxUtilizationPct.toFixed(1),
-    eventLoopUtilization.avgUtilizationPct.toFixed(1));
+    eventLoopUtilization.avgUtilizationPct.toFixed(1),
+    eventLoopUtilization.minUtilizationPct.toFixed(1),
+    eventLoopUtilization.maxUtilizationPct.toFixed(1));
   lines += lp.liveLine("Status: %s", getStatus());
   return lines;
 }

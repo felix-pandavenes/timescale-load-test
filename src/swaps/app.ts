@@ -85,12 +85,13 @@ export async function runSwaps(cfg: SwapsConfig): Promise<void> {
     let nextPair = 0;
     const swapsPerMs = chain.swapsPerSecond / 1000;
     const intervalMs = Math.max(1, Math.round(1000 / chain.swapsPerSecond));
+    const MAX_CATCHUP_MS = 1000;
     let carry = 0;
     let lastTick = Date.now();
     const timer = setInterval(() => {
       if (generatorsStopped) return;
       const now = Date.now();
-      carry += (now - lastTick) * swapsPerMs;
+      carry += Math.min(now - lastTick, MAX_CATCHUP_MS) * swapsPerMs;
       lastTick = now;
       const due = Math.floor(carry);
       carry -= due;
